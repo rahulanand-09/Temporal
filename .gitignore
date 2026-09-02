@@ -1,0 +1,10 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.zed/
+.temporal.db
+.temporal-dev.log
+.temporal-dev.pid
+.DS_Store

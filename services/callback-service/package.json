@@ -1,0 +1,17 @@
+{
+  "name": "callback-service",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@temporalio/client": "^1.11.0",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.12.0"
+  }
+}
