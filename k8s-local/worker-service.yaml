@@ -1,0 +1,80 @@
+# worker-service: the SDK worker fleet that actually executes OrderFulfillmentWorkflow and its
+# activities -- distinct from the Temporal server's own "worker" component (internal system
+# workflows, port 7239). This is the piece that determines how fast the cluster can drain
+# task-queue backlog once orders are open; scaled horizontally (replicas) and per-pod
+# (MAX_CONCURRENT_ACTIVITIES/MAX_CONCURRENT_WORKFLOW_TASKS) independently, so both axes are
+# visible in the load-test writeup.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-service
+  namespace: order-fulfillment
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: worker-service
+  template:
+    metadata:
+      labels:
+        app: worker-service
+    spec:
+      containers:
+        - name: worker-service
+          image: order-worker-service:load-test
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9464
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: "temporal-frontend.temporal-system.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TASK_QUEUE
+              value: "order-fulfillment-queue"
+            - name: CALLBACK_BASE_URL
+              value: "http://callback-service.order-fulfillment.svc.cluster.local:4000"
+            - name: JSONPLACEHOLDER_BASE_URL
+              value: "http://callback-service.order-fulfillment.svc.cluster.local:4000"
+            - name: MAX_CONCURRENT_ACTIVITIES
+              value: "200"
+            - name: MAX_CONCURRENT_WORKFLOW_TASKS
+              value: "200"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-service
+  namespace: order-fulfillment
+  # ServiceMonitor.spec.selector matches THIS (the Service object's own labels), not
+  # spec.selector below (which only controls which pods the Service points to) -- missing this
+  # is exactly what silently produced zero scrape targets before this fix.
+  labels:
+    app: worker-service
+spec:
+  selector:
+    app: worker-service
+  ports:
+    - name: metrics
+      port: 9464
+      targetPort: 9464
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: worker-service
+  namespace: order-fulfillment
+spec:
+  selector:
+    matchLabels:
+      app: worker-service
+  endpoints:
+    - port: metrics
+      interval: 15s

@@ -1,0 +1,110 @@
+# Diversified topology for the load test (supersedes the original uniform 2/2/2/2 from the
+# first pass). See ../OBSERVABILITY_AND_LOAD_TEST.md for the full reasoning; short version below.
+#
+# What actually gets stressed by "many thousands of concurrently open workflow executions":
+#   - History: owns the 512 shards, holds the mutable-state cache, does the heaviest
+#     persistence traffic (every event append). The most likely first bottleneck -- gets the
+#     most replicas AND the most memory per pod.
+#   - Frontend: absorbs burst StartWorkflowExecution rate from callback-service/k6. Needs
+#     enough replicas for that burst, not for steady-state (real load here is bursty, not
+#     sustained per TEMPORAL_CAPACITY_PLAN.md's own framing).
+#   - Matching: task dispatch to the SDK worker fleet. Moderate -- worker-service's own
+#     replica count/concurrency limits matter at least as much as Matching's.
+#   - Worker (internal system-worker component, port 7239): runs Temporal's OWN system
+#     workflows (archival etc), NOT our OrderFulfillmentWorkflow -- that's worker-service, a
+#     separate Deployment entirely (see ../worker-service.yaml). Stays at the HA minimum.
+#
+# IMPORTANT, verified by reading templates/server-deployment.yaml and _helpers.tpl directly
+# (not assumed): frontend/history/matching/worker are read via `index $.Values.server $service`
+# -- i.e. they must be NESTED under `server:`, not top-level siblings of it. An earlier draft of
+# this file got that wrong (top-level keys); Helm doesn't error on unknown keys, it silently
+# no-ops them, so that draft would have deployed with none of the per-service overrides below
+# actually applied. Caught by reading the chart source before applying, not after.
+
+server:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+  config:
+    persistence:
+      defaultStore: default
+      visibilityStore: visibility
+      numHistoryShards: 512
+      datastores:
+        default:
+          sql:
+            pluginName: postgres12
+            databaseName: temporal
+            connectAddr: "postgres-postgresql.temporal-system.svc.cluster.local:5432"
+            connectProtocol: tcp
+            user: postgres
+            existingSecret: postgres-credentials
+            secretKey: postgres-password
+            createDatabase: true
+            manageSchema: true
+            # Budgeted against Postgres's max_connections=500 (see postgres-values.yaml) for
+            # worst case across every server pod below opening this many connections to both
+            # stores at once: (3+4+3+2 pods) * 2 stores * 15 = 360, leaving headroom for
+            # admintools/schema-job connections. Trimmed below the chart's own default of 20
+            # deliberately, not left unset.
+            maxConns: 15
+            maxIdleConns: 10
+        visibility:
+          sql:
+            pluginName: postgres12
+            databaseName: temporal_visibility
+            connectAddr: "postgres-postgresql.temporal-system.svc.cluster.local:5432"
+            connectProtocol: tcp
+            user: postgres
+            existingSecret: postgres-credentials
+            secretKey: postgres-password
+            createDatabase: true
+            manageSchema: true
+            maxConns: 15
+            maxIdleConns: 10
+
+    namespaces:
+      create: true
+      namespace:
+        - name: default
+          retention: 3d
+
+  # No blanket `replicaCount:`/`resources:` at this level -- each service below sets its own,
+  # sized to its actual role instead of one shared guess.
+
+  frontend:
+    replicaCount: 3
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+  history:
+    replicaCount: 4
+    resources:
+      requests:
+        cpu: 750m
+        memory: 1Gi
+      limits:
+        memory: 2Gi
+
+  matching:
+    replicaCount: 3
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+  worker:
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        memory: 512Mi

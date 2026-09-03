@@ -102,3 +102,29 @@ local SQLite file next to this README) — delete it for a clean slate.
 
 See `COMPARISON.md` for the same six dimensions evaluated for Conductor, now measured against
 this Temporal run, plus a direct side-by-side of the two POCs.
+
+## Beyond the dev server: a real Kubernetes deployment, load tested
+
+The quickstart above runs against the embedded-SQLite dev server — fine for exploring the
+programming model, not for anything resembling a production topology, persistence backend, or
+scale. A second track in this repo builds and load-tests the real thing: a local `kind`
+Kubernetes cluster running the official Temporal Helm chart, backed by PostgreSQL — including
+Advanced Visibility (full-text search via GIN indexes, no Elasticsearch) — a role-diversified
+server-tier topology, full Prometheus/Grafana observability, and a k6 load test staged up to
+20,051 concurrently open workflow executions.
+
+Read in this order:
+
+| Doc | Covers |
+|---|---|
+| [`LOCAL_KUBE_TEMPORAL_POSTGRES.md`](LOCAL_KUBE_TEMPORAL_POSTGRES.md) | Building the cluster: `kind`, the Helm chart, Postgres as both the default *and* visibility store |
+| [`OBSERVABILITY_AND_LOAD_TEST.md`](OBSERVABILITY_AND_LOAD_TEST.md) | Prometheus/Grafana setup, diversified server-tier sizing and why, the staged load test to 20,051 concurrent workflows, the GIN/B-tree search test, and a derived prod sizing recommendation |
+| [`K6_LOAD_TESTING.md`](K6_LOAD_TESTING.md) | How k6 itself was used — script by script, why it beat a hand-rolled load generator, the Prometheus remote-write wiring |
+| [Load Test Evidence](https://claude.ai/code/artifact/9bfc6b9a-439f-4ca0-901d-c8a8dee7e991) | Consolidated visual report — every metric as a real Prometheus-sourced chart, plus the sizing estimate, in one page (currently private — share it from the page if it needs to be linkable outside your own account) |
+| `TEMPORAL_CAPACITY_PLAN.md` | The steady-state throughput analysis the load test's sizing recommendation builds on |
+
+Everything for this track lives under `k8s-local/`: Helm values for Temporal and Postgres,
+Kubernetes manifests for the application-tier services (`callback-service`, `worker-service`),
+and the k6 load-test scripts (`k8s-local/load-test/`). `k8s-local/scale-down.sh` /
+`scale-up.sh` toggle the cluster between a minimal idle footprint and the full load-tested
+topology — nothing about that configuration needs to be rebuilt to run the load test again.

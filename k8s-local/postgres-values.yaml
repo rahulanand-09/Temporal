@@ -1,0 +1,53 @@
+# Single PostgreSQL instance backing BOTH Temporal datastores:
+#   - "temporal"            (default/execution store)
+#   - "temporal_visibility" (visibility store — Advanced Visibility, native full-text search)
+#
+# One instance, two databases — matches what was asked for ("a postgres instance"), not two.
+# The second database is created by Temporal's own schema Job (sql.createDatabase: true in
+# temporal-values.yaml), not by this chart, so nothing here pre-creates it.
+auth:
+  enablePostgresUser: true
+  existingSecret: postgres-credentials
+  secretKeys:
+    adminPasswordKey: postgres-password
+    userPasswordKey: postgres-password
+  # POC simplification: Temporal's persistence config connects as the `postgres` superuser
+  # rather than a least-privilege role. Reason: CREATE DATABASE (for temporal_visibility) and
+  # CREATE EXTENSION btree_gin (for the advanced-visibility schema migration) both need
+  # elevated privileges, and wiring a scoped role would mean pre-granting CREATEDB and
+  # trusted-extension rights by hand before the schema Job runs. Not what you'd do for a real
+  # deployment — see the doc's "Deliberate simplifications" section.
+
+primary:
+  persistence:
+    enabled: true
+    size: 2Gi
+  resources:
+    # Bumped from the initial 250m/256Mi now that this is the shared backend for a diversified,
+    # load-tested Temporal topology (12 server pods instead of 8, plus load-test-volume writes)
+    # instead of just holding the schema.
+    requests:
+      cpu: 1
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  # 100 (Postgres's own compiled-in default, confirmed live via `show max_connections` before
+  # this change) is already tight at the original 2/2/2/2 topology (33 in use at idle). Worst
+  # case across the diversified topology below (§ temporal-values.yaml) — every server pod
+  # opening its configured maxConns to every store it touches — lands north of 300. 500 leaves
+  # real headroom without introducing a connection pooler (PgBouncer) into a local POC; a real
+  # deployment would use one instead of raising this indefinitely.
+  extendedConfiguration: |
+    max_connections = 500
+
+# Single instance — no read replicas. This is a POC datastore, not a target for HA.
+architecture: standalone
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi

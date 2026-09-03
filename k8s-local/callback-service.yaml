@@ -1,0 +1,61 @@
+# callback-service: the HTTP ingress for this load test (POST /orders, idempotency-keyed) AND
+# the in-cluster stand-in for both the payment processor and jsonplaceholder.typicode.com (see
+# activities.py / index.js for why the latter matters at load-test volume). Horizontally scaled
+# per its own request -- this is a real HTTP service under concurrent load from load_gen.py, not
+# just a passthrough, and 1 replica would make *it* the bottleneck before Temporal itself is
+# ever stressed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: callback-service
+  namespace: order-fulfillment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: callback-service
+  template:
+    metadata:
+      labels:
+        app: callback-service
+    spec:
+      containers:
+        - name: callback-service
+          image: callback-service:load-test
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          env:
+            - name: PORT
+              value: "4000"
+            - name: TEMPORAL_ADDRESS
+              value: "temporal-frontend.temporal-system.svc.cluster.local:7233"
+            # Load-test-specific: long enough that orders started during the ramp stay parked in
+            # "awaiting_payment" (workflow.wait_condition) for the whole test, so the cluster is
+            # actually holding N executions open concurrently -- rather than conflating "how many
+            # open at once" with "sustained steady-state start-rate", a different question. Set
+            # back to something short (the default 4000) for normal functional use.
+            - name: AUTH_DELAY_MS
+              value: "1800000"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            tcpSocket:
+              port: 4000
+            initialDelaySeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: callback-service
+  namespace: order-fulfillment
+spec:
+  selector:
+    app: callback-service
+  ports:
+    - port: 4000
+      targetPort: 4000

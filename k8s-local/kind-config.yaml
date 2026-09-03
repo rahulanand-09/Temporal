@@ -1,0 +1,11 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: temporal-local
+# Single control-plane node. kind nodes are just containers on the same Docker host, so a
+# multi-node "cluster" here would add nothing but scheduling noise for an 11-pod workload —
+# Frontend/History/Matching/Worker at 2 replicas each schedule fine on one node.
+# Exposure to the host is via `kubectl port-forward` (see docs), not NodePort mappings here,
+# since the chart's Frontend/Web Services are ClusterIP by default and port-forward needs no
+# pre-planned fixed ports.
+nodes:
+  - role: control-plane

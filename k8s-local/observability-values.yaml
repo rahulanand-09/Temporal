@@ -1,0 +1,71 @@
+# kube-prometheus-stack, trimmed for a laptop budget: no Alertmanager (nothing here pages
+# anyone), Prometheus's remote-write receiver turned on (k6 --out experimental-prometheus-rw
+# writes load-test metrics straight into the same Prometheus as the cluster metrics, so
+# request-rate/latency and CPU/memory/DB-latency sit on one timeline, not two tools to
+# cross-reference by hand). Kept: kube-state-metrics + node-exporter (pod/container CPU & memory
+# via cAdvisor -- essential for "which pod is actually the bottleneck"), Grafana.
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    enableRemoteWriteReceiver: true
+    retention: 6h
+    # Match ServiceMonitors/PodMonitors in ANY namespace with ANY labels -- not just ones
+    # carrying this release's own selector labels. Needed to pick up the temporal chart's own
+    # ServiceMonitors (server.metrics.serviceMonitor.enabled) and postgresql's, both installed
+    # as separate releases in temporal-system, without hand-labeling every one of them.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 8Gi
+
+grafana:
+  adminPassword: admin
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    # This chart's current Grafana version bootstraps a large set of grafana-apiserver API
+    # groups on startup (dashboards/playlists/alerting/etc as first-class resources, not just
+    # SQLite rows) -- observed OOMKilled at 256Mi limit before it finished starting. 512Mi is
+    # comfortable headroom, still small next to the 17.5GiB total budget.
+    limits:
+      memory: 512Mi
+  # Sidecar auto-loads any ConfigMap labeled grafana_dashboard=1 in any namespace -- how
+  # Temporal's official dashboards get imported without manual Grafana UI clicking.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi

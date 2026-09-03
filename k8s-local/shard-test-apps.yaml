@@ -1,0 +1,65 @@
+# Throwaway app tier for the numHistoryShards comparison experiment (2048 shards, vs. the
+# original 512-shard run's stage-2 data point at 5,051 open workflows). Same images already
+# built/loaded for the main load test -- just pointed at temporal-shard2048's frontend instead.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: callback-service
+  namespace: shard-test
+  labels: { app: callback-service }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: callback-service } }
+  template:
+    metadata: { labels: { app: callback-service } }
+    spec:
+      containers:
+        - name: callback-service
+          image: callback-service:load-test
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4000 }]
+          env:
+            - { name: PORT, value: "4000" }
+            - { name: TEMPORAL_ADDRESS, value: "temporal-shard2048-frontend.temporal-system.svc.cluster.local:7233" }
+            - { name: AUTH_DELAY_MS, value: "1800000" }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: callback-service
+  namespace: shard-test
+spec:
+  selector: { app: callback-service }
+  ports: [{ port: 4000, targetPort: 4000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-service
+  namespace: shard-test
+  labels: { app: worker-service }
+spec:
+  replicas: 4
+  selector: { matchLabels: { app: worker-service } }
+  template:
+    metadata: { labels: { app: worker-service } }
+    spec:
+      containers:
+        - name: worker-service
+          image: order-worker-service:load-test
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: TEMPORAL_ADDRESS, value: "temporal-shard2048-frontend.temporal-system.svc.cluster.local:7233" }
+            - { name: TEMPORAL_NAMESPACE, value: "default" }
+            - { name: TEMPORAL_TASK_QUEUE, value: "order-fulfillment-queue" }
+            - { name: CALLBACK_BASE_URL, value: "http://callback-service.shard-test.svc.cluster.local:4000" }
+            - { name: JSONPLACEHOLDER_BASE_URL, value: "http://callback-service.shard-test.svc.cluster.local:4000" }
+            - { name: MAX_CONCURRENT_ACTIVITIES, value: "200" }
+            - { name: MAX_CONCURRENT_WORKFLOW_TASKS, value: "200" }
+            - { name: METRICS_BIND_ADDRESS, value: "" }
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { memory: 512Mi }

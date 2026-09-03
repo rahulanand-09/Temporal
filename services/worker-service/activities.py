@@ -1,10 +1,15 @@
 import asyncio
+import os
 
 import httpx
 from temporalio import activity
 
-CALLBACK_BASE = "http://localhost:4100"
-JSONPLACEHOLDER = "https://jsonplaceholder.typicode.com"
+# Both default to the values used for local, non-containerized dev (matching scripts/run.sh).
+# Override for in-cluster runs -- load testing in particular must not point JSONPLACEHOLDER at
+# the real https://jsonplaceholder.typicode.com: that's a shared free public API, not built to
+# take load-test-volume traffic, so the load test points this at an in-cluster stand-in instead.
+CALLBACK_BASE = os.environ.get("CALLBACK_BASE_URL", "http://localhost:4100")
+JSONPLACEHOLDER = os.environ.get("JSONPLACEHOLDER_BASE_URL", "https://jsonplaceholder.typicode.com")
 
 
 @activity.defn
