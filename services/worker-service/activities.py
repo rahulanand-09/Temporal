@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 
 import httpx
 from temporalio import activity
@@ -10,6 +11,12 @@ from temporalio import activity
 # take load-test-volume traffic, so the load test points this at an in-cluster stand-in instead.
 CALLBACK_BASE = os.environ.get("CALLBACK_BASE_URL", "http://localhost:4100")
 JSONPLACEHOLDER = os.environ.get("JSONPLACEHOLDER_BASE_URL", "https://jsonplaceholder.typicode.com")
+
+# A real carrier-lookup call doesn't take exactly 3.000s every time -- fixed delay flattened
+# whatever effect real variance has on queueing/concurrency under load. Default range is a
+# plausible real carrier-API spread, not just "the old constant plus noise"; override via env.
+SHIPPING_DELAY_MIN_S = float(os.environ.get("SHIPPING_DELAY_MIN_S", "1.5"))
+SHIPPING_DELAY_MAX_S = float(os.environ.get("SHIPPING_DELAY_MAX_S", "5.0"))
 
 
 @activity.defn
@@ -45,8 +52,9 @@ async def initiate_payment(params: dict) -> dict:
 
 @activity.defn
 async def process_shipping(order_id: int) -> dict:
-    activity.logger.info(f"picked up order {order_id}, simulating carrier lookup...")
-    await asyncio.sleep(3)  # simulated async I/O (a carrier API call)
+    delay = random.uniform(SHIPPING_DELAY_MIN_S, SHIPPING_DELAY_MAX_S)
+    activity.logger.info(f"picked up order {order_id}, simulating carrier lookup ({delay:.2f}s)...")
+    await asyncio.sleep(delay)  # simulated async I/O (a carrier API call), jittered not fixed
     return {"status": "SHIPPED", "orderId": order_id, "carrier": "local-sim-carrier"}
 
 

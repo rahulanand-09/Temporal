@@ -21,24 +21,32 @@ auth:
 primary:
   persistence:
     enabled: true
-    size: 2Gi
+    size: 2Gi  # StatefulSet volumeClaimTemplates are immutable post-creation -- can't resize this
+               # without deleting the PVC (and its data). Not the OOM's cause anyway (that was
+               # memory); revisit only if disk actually fills up.
   resources:
-    # Bumped from the initial 250m/256Mi now that this is the shared backend for a diversified,
-    # load-tested Temporal topology (12 server pods instead of 8, plus load-test-volume writes)
-    # instead of just holding the schema.
+    # Bumped a second time, the hard way: scale-down.sh had this at 250m/256Mi (right-sized for
+    # an IDLE cluster), and starting a second full 3F/4H/3M/2W topology plus a real
+    # workflow-completion load test (actual event-history writes, not just parked executions)
+    # against that idle-sized instance OOMKilled Postgres mid-run (12 restarts, confirmed via
+    # `kubectl describe pod` -> `Last State: Terminated, Reason: OOMKilled`) -- which cascaded
+    # into every pod that needed a *fresh* DB connection crash-looping (new workers, the
+    # namespace-setup job) while already-connected pods (Frontend/History/Matching) kept running
+    # obliviously. Lesson: re-check this file's sizing against the CURRENT combined workload
+    # before starting a heavier experiment, not just after scale-up.sh's fixed topology.
     requests:
-      cpu: 1
-      memory: 1Gi
-    limits:
+      cpu: 2
       memory: 2Gi
-  # 100 (Postgres's own compiled-in default, confirmed live via `show max_connections` before
-  # this change) is already tight at the original 2/2/2/2 topology (33 in use at idle). Worst
-  # case across the diversified topology below (§ temporal-values.yaml) — every server pod
-  # opening its configured maxConns to every store it touches — lands north of 300. 500 leaves
-  # real headroom without introducing a connection pooler (PgBouncer) into a local POC; a real
-  # deployment would use one instead of raising this indefinitely.
+    limits:
+      memory: 4Gi
+  # 100 (Postgres's own compiled-in default) was already tight at a single 2/2/2/2 topology (33
+  # in use at idle). 500 covered one diversified 3F/4H/3M/2W topology with real headroom. Bumped
+  # again to 800 for running a *second* full topology alongside it (numHistoryShards A/B
+  # testing) -- two 12-pod topologies' worth of connections can realistically approach 500 on
+  # their own. A real deployment would reach for a connection pooler (PgBouncer) instead of
+  # raising this indefinitely.
   extendedConfiguration: |
-    max_connections = 500
+    max_connections = 800
 
 # Single instance — no read replicas. This is a POC datastore, not a target for HA.
 architecture: standalone

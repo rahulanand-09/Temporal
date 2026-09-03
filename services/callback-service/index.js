@@ -4,7 +4,25 @@ import { Connection, Client, WorkflowExecutionAlreadyStartedError } from '@tempo
 const PORT = process.env.PORT || 4000;
 const TEMPORAL_ADDRESS = process.env.TEMPORAL_ADDRESS || 'localhost:7233';
 const AUTH_DELAY_MS = Number(process.env.AUTH_DELAY_MS || 4000);
+// Real payment settlement doesn't land at exactly AUTH_DELAY_MS every time either -- +/- this
+// much jitter around it. Clamped to non-negative below so a large jitter can't go negative.
+const AUTH_DELAY_JITTER_MS = Number(process.env.AUTH_DELAY_JITTER_MS || 1000);
 const ORDER_TASK_QUEUE = process.env.ORDER_TASK_QUEUE || 'order-fulfillment-queue';
+
+// Every stand-in below (jsonplaceholder, payment ack, notification channel) responded near-
+// instantly by default -- fine for a functional smoke test, but it understates real external-
+// call latency and flattens whatever effect real jitter has on queueing/concurrency under load.
+// A real third-party API doesn't answer in 2ms every time. Default range approximates a
+// reasonably healthy external HTTP dependency (p50 well under 200ms, occasional slower tail);
+// override via env for a specific scenario.
+const STANDIN_LATENCY_MIN_MS = Number(process.env.STANDIN_LATENCY_MIN_MS || 40);
+const STANDIN_LATENCY_MAX_MS = Number(process.env.STANDIN_LATENCY_MAX_MS || 250);
+
+function jitterDelay() {
+  const spread = Math.max(0, STANDIN_LATENCY_MAX_MS - STANDIN_LATENCY_MIN_MS);
+  const ms = STANDIN_LATENCY_MIN_MS + Math.random() * spread;
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const app = express();
 app.use(express.json());
@@ -87,10 +105,12 @@ app.get('/search', async (req, res) => {
 // then "settles" asynchronously and delivers a real Temporal *signal* to
 // resume the paused workflow -- this is the POC's callback block, built on
 // Temporal's native signal mechanism instead of a REST "complete task" call.
-app.post('/authorize', (req, res) => {
+app.post('/authorize', async (req, res) => {
   const { workflowId, orderId, paymentMethod } = req.body;
+  await jitterDelay(); // a real gateway doesn't ack in 0ms either
+  const settleDelay = Math.max(0, AUTH_DELAY_MS + (Math.random() * 2 - 1) * AUTH_DELAY_JITTER_MS);
   console.log(
-    `[authorize] workflowId=${workflowId} orderId=${orderId} method=${paymentMethod} -- accepted, confirming in ${AUTH_DELAY_MS}ms`
+    `[authorize] workflowId=${workflowId} orderId=${orderId} method=${paymentMethod} -- accepted, confirming in ${settleDelay.toFixed(0)}ms`
   );
   res.status(202).json({ accepted: true });
 
@@ -106,7 +126,7 @@ app.post('/authorize', (req, res) => {
     } catch (err) {
       console.error(`[authorize] failed to signal workflow ${workflowId}`, err.message);
     }
-  }, AUTH_DELAY_MS);
+  }, settleDelay);
 });
 
 // Manual override for demoing the pause/resume boundary by hand -- delivers
@@ -130,7 +150,8 @@ app.post('/confirm', async (req, res) => {
 });
 
 // Stand-in notification channel used by the workflow's dynamic fan-out.
-app.post('/notify', (req, res) => {
+app.post('/notify', async (req, res) => {
+  await jitterDelay();
   console.log('[notify]', req.body);
   res.json({ delivered: true, channel: req.body.channel });
 });
@@ -142,15 +163,18 @@ app.post('/notify', (req, res) => {
 // load test does stays inside the cluster network. Shapes only what the workflow actually
 // reads off the response (user.name, order.id); nothing else about jsonplaceholder is modeled.
 let nextPostId = 101; // jsonplaceholder's own fake-create convention starts new posts at 101
-app.get('/users/:id', (req, res) => {
+app.get('/users/:id', async (req, res) => {
+  await jitterDelay();
   const id = Number(req.params.id);
   res.json({ id, name: `Load Test User ${id}`, email: `user${id}@load-test.local` });
 });
-app.post('/posts', (req, res) => {
+app.post('/posts', async (req, res) => {
+  await jitterDelay();
   const { title, body, userId } = req.body;
   res.status(201).json({ id: nextPostId++, title, body, userId });
 });
-app.patch('/posts/:id', (req, res) => {
+app.patch('/posts/:id', async (req, res) => {
+  await jitterDelay();
   res.json({ id: Number(req.params.id), ...req.body });
 });
 
